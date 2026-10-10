@@ -1,0 +1,23 @@
+{
+  "name": "Hardened support simulator",
+  "adapter": "simulator",
+  "manifest": {
+    "schema_version": 1,
+    "adapter": "simulator",
+    "mode": "hardened",
+    "identity": "support-agent",
+    "tools": [
+      {"name":"search_documents","enabled":true,"risk":"low","roles":["support-agent"],"permission":"docs:search","scope":"synthetic-documents"},
+      {"name":"read_customer_record","enabled":true,"risk":"high","roles":["security-admin"],"permission":"customer:read_restricted","scope":"synthetic-customer-records","approval_required":true},
+      {"name":"update_ticket","enabled":true,"risk":"medium","roles":["support-agent"],"permission":"ticket:update","scope":"synthetic-tickets"},
+      {"name":"send_email","enabled":true,"risk":"high","roles":["support-agent"],"permission":"email:send","scope":"simulation-only","approval_required":true},
+      {"name":"retrieve_memory","enabled":true,"risk":"medium","roles":["support-agent"],"permission":"memory:read","scope":"session"},
+      {"name":"store_memory","enabled":true,"risk":"medium","roles":["support-agent"],"permission":"memory:write","scope":"session"}
+    ],
+    "policy": {
+      "enforce_allowlist": true,
+      "block_untrusted_memory_authorization": true,
+      "require_approval_for_high_risk": true
+    }
+  }
+}
