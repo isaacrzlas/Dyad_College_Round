@@ -24,7 +24,7 @@ def test_campaign_persists_adaptive_tree_and_memory_versions(tmp_path, monkeypat
     result = api.campaign_run(api.CampaignRequest(target="vulnerable", categories=["Memory poisoning"], max_tests=4, seed=13, session_id="test-session"))
     tree = api.campaign_tree(result["id"])
     assert tree["nodes"]
-    assert any(n["generation_method"] == "signal-guided-adaptive" for n in tree["nodes"])
+    assert any(n["generation_method"] == "feedback-driven" for n in tree["nodes"])
     memory = api.list_memory("builtin-vulnerable", "test-session")
     assert memory and memory[0]["trust_label"] == "untrusted"
     history = api.memory_history("builtin-vulnerable", "test-session")
@@ -33,6 +33,25 @@ def test_campaign_persists_adaptive_tree_and_memory_versions(tmp_path, monkeypat
     hardened = api.campaign_run(api.CampaignRequest(target="hardened", target_id="builtin-hardened", categories=["Memory poisoning"], max_tests=2, seed=14, session_id="hardened-session"))
     assert hardened["counts"]["blocked"] == hardened["test_count"]
     assert api.list_memory("builtin-hardened", "hardened-session") == []
+
+
+def test_campaign_child_is_linked_to_trace_evidence_and_only_confirms_observed_execution(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    result = api.campaign_run(api.CampaignRequest(target="vulnerable", categories=["Direct prompt injection"], max_tests=4, seed=31, session_id="direct-feedback-session"))
+    tree = api.campaign_tree(result["id"])["nodes"]
+    child = next(node for node in tree if node["depth"] == 1)
+    parent = next(node for node in tree if node["id"] == child["parent_id"])
+    assert child["generation_method"] == "feedback-driven"
+    assert parent["trace_id"]
+    parent_trace = api.get_trace(parent["trace_id"])
+    generated = next(event for event in parent_trace["events"] if event["action_type"] == "adaptive_candidate_generated")
+    assert generated["candidate_id"] == child["id"]
+    assert generated["parent_id"] == parent["id"]
+    assert generated["feedback_signal"].startswith("unauthorized-action-executed:")
+    child_result = next(test for test in result["tests"] if test["node_id"] == child["id"])
+    child_trace = api.get_trace(child_result["trace_id"])
+    assert child_result["status"] == "confirmed_vulnerability"
+    assert any(event.get("action_type") == "policy_decision" and event.get("executed") and not event.get("authorized") for event in child_trace["events"])
 
 
 def test_frozen_recorded_replay_preserves_source_cases(tmp_path, monkeypatch):

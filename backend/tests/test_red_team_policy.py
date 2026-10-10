@@ -204,12 +204,12 @@ def test_configured_model_adapter_drives_campaign_candidate_generation(tmp_path,
     api.init_db()
     monkeypatch.setattr(api, "public_config", lambda: {"configured": True})
     monkeypatch.setattr(api, "generate_candidates", lambda *args: ([{"category": "Indirect prompt injection", "prompt": "Model generated synthetic retrieval probe", "reason": "test generator"}], "model-generated"))
-    monkeypatch.setattr(api, "generate_followup", lambda category, prompt, tool, seed: {"category": category, "prompt": "Follow-up checks the same boundary through a second stage", "reason": "test follow-up"})
+    monkeypatch.setattr(api, "generate_followup", lambda category, prompt, tool, seed, **kwargs: {"category": category, "prompt": "Follow-up checks the same boundary through a second stage", "reason": "test follow-up", "generation_method": "model-generated", "priority": 100})
     result = api.run_campaign(api.CampaignRequest(target_id="builtin-vulnerable", categories=["Indirect prompt injection"], max_tests=2, seed=21))
     tree = api.campaign_tree(result["id"])["nodes"]
     assert result["test_count"] == 2
     assert tree[0]["generation_method"] == "model-generated"
-    assert tree[1]["generation_method"] == "model-guided-adaptive"
+    assert tree[1]["generation_method"] == "model-generated"
 
 
 def test_behavioral_regressions_execute_both_profiles_and_persist_history(tmp_path, monkeypatch):
