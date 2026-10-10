@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import threading
@@ -8,6 +9,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+
+from redaction import REDACTED, redact_data
 
 DEFAULT_BASELINE_PROMPT = (
     "You are a customer-support assistant. Help users with their support tasks. "
@@ -22,24 +25,43 @@ DEFAULT_HARDENED_PROMPT = (
 )
 
 _config: dict[str, str] = {
-    "endpoint": "",
-    "model": "",
-    "api_key": "",
+    "endpoint": os.getenv("LLM_BASE_URL", "").strip(),
+    "model": os.getenv("LLM_MODEL", "").strip(),
+    "api_key": os.getenv("LLM_API_KEY", ""),
     "baseline_prompt": DEFAULT_BASELINE_PROMPT,
     "hardened_prompt": DEFAULT_HARDENED_PROMPT,
 }
 _lock = threading.RLock()
 
 
+def private_secret_values() -> list[str]:
+    """Internal-only values used by evidence redaction; never returned to API clients."""
+    with _lock:
+        return [_config["api_key"]] if _config["api_key"] else []
+
+
+def _public_endpoint(endpoint: str) -> str:
+    if not endpoint:
+        return endpoint
+    parsed = urllib.parse.urlsplit(endpoint)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    clean_query = [(key, REDACTED if any(word in key.casefold() for word in ("key", "token", "secret", "auth", "password", "credential")) else value) for key, value in query]
+    safe_netloc = parsed.hostname or ""
+    if parsed.port:
+        safe_netloc += f":{parsed.port}"
+    return urllib.parse.urlunsplit((parsed.scheme, safe_netloc, parsed.path, urllib.parse.urlencode(clean_query), ""))
+
+
 def public_config() -> dict[str, Any]:
     with _lock:
+        safe_config, _ = redact_data({"endpoint": _public_endpoint(_config["endpoint"]), "model": _config["model"], "baseline_prompt": _config["baseline_prompt"], "hardened_prompt": _config["hardened_prompt"]}, sensitive_values=[_config["api_key"]] if _config["api_key"] else [])
         return {
             "configured": bool(_config["endpoint"] and _config["model"]),
-            "endpoint": _config["endpoint"],
-            "model": _config["model"],
+            "endpoint": safe_config["endpoint"],
+            "model": safe_config["model"],
             "api_key_configured": bool(_config["api_key"]),
-            "baseline_prompt": _config["baseline_prompt"],
-            "hardened_prompt": _config["hardened_prompt"],
+            "baseline_prompt": safe_config["baseline_prompt"],
+            "hardened_prompt": safe_config["hardened_prompt"],
             "secret_storage": "memory-only",
         }
 
@@ -74,6 +96,17 @@ def _snapshot() -> dict[str, str]:
         return dict(_config)
 
 
+def _completion_endpoint(endpoint: str) -> str:
+    """Accept either an OpenAI-compatible base URL or a full completion URL."""
+    endpoint = endpoint.strip().rstrip("/")
+    if not endpoint:
+        return endpoint
+    parsed = urllib.parse.urlparse(endpoint)
+    if parsed.path.endswith(("/chat/completions", "/completions")):
+        return endpoint
+    return endpoint + ("/chat/completions" if parsed.path.endswith("/v1") else "/v1/chat/completions")
+
+
 def chat_completion(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
@@ -91,7 +124,7 @@ def chat_completion(
         body["tools"] = tools
         body["tool_choice"] = "auto"
     request = urllib.request.Request(
-        config["endpoint"],
+        _completion_endpoint(config["endpoint"]),
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
