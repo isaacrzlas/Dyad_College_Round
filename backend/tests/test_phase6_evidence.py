@@ -161,8 +161,21 @@ def test_sqlite_evidence_survives_controlled_backend_restart(tmp_path):
         assert _request(base, f"/api/traces/{trace_id}")["events"]
         assert _request(base, f"/api/memory?target_id=builtin-vulnerable&session_id={session_id}")[0]["value"] == "persisted evidence"
         assert _request(base, f"/api/validations/{validation_id}/corpus")["status"] == "completed"
-        assert _request(base, f"/api/validations/{validation_id}/export")["schema_version"] == 1
-        assert _request(base, f"/api/replays/{replay_id}")["cases"]
+        validation_report = _request(base, f"/api/validations/{validation_id}/export")
+        assert validation_report["schema_version"] == 1
+        assert validation_report["frozen_attack_corpus"]["id"] == validation["metrics"]["attack_corpus_id"]
+        assert validation_report["campaigns"]["baseline"]["tests"]
+        assert validation_report["campaigns"]["hardened"]["tests"]
+        assert validation_report["frozen_attack_corpus"]["outcomes"]
+        assert validation_report["regressions"]["baseline"]["results"]
+        assert validation_report["regressions"]["hardened"]["results"]
+        replay_record = _request(base, f"/api/replays/{replay_id}")
+        assert replay_record["cases"]
+        replay_report = _request(base, f"/api/replays/{replay_id}/export")
+        assert replay_report["report_metadata"]["replay_id"] == replay_id
+        assert replay_report["replay"]["cases"]
+        assert replay_report["traces"]
+        assert all(trace["events"] for trace in replay_report["traces"])
         assert _request(base, f"/api/regression/runs/{baseline_run}")["results"]
         assert _request(base, f"/api/regression/runs/{hardened_run}")["results"]
     finally:

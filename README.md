@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173>. Select **Run Live Demo** for the end-to-end synthetic exploit, hardened replay, benign regressions, and saved comparison. SQLite is created at `backend/agentbreak.sqlite3`; set `AGENTBREAK_DB` to choose another path.
+Open <http://127.0.0.1:5173>. Select **Run Guided Demo** for the credential-free end-to-end synthetic exploit, hardened replay, benign regressions, and saved comparison. SQLite is created at `backend/agentbreak.sqlite3`; set `AGENTBREAK_DB` to choose another path.
 
 ## Implemented capabilities
 
@@ -38,6 +38,7 @@ Open <http://127.0.0.1:5173>. Select **Run Live Demo** for the end-to-end synthe
 - Regression outcomes use `passed`, `failed`, `skipped`, `errored`, or `inconclusive`; saved results include validation ID, target configuration version, explanation, and trace references. Errors and missing evidence are never counted as successful defenses.
 - Dashboard, finding and trace explorers, adaptive discovery tree, target editor/auditor, memory inspector, replay lab, defense comparison, and regression view.
 - JSON campaign export and additive SQLite schema migration marker.
+- Complete persisted JSON exports for paired defense validations and replay runs, including source candidates, case outcomes, regression evidence, and trace events.
 
 ## Current adapter boundary
 
@@ -61,6 +62,7 @@ The editable built-in targets show the schema in the UI. A sample is at `backend
 | GET | `/api/campaigns/{id}` | Campaign, traces, and findings |
 | POST | `/api/replay/run` | Recorded replay of completed source-campaign nodes |
 | GET | `/api/replays`, `/api/replays/{id}` | Replay run and per-case results |
+| GET | `/api/replays/{id}/export` | Download persisted replay evidence and traces |
 | POST | `/api/defense/validate` | Frozen attack replay plus comparative behavioral regression runs |
 | GET/POST/PATCH/DELETE | `/api/regressions` and `/api/regressions/{id}` | Regression case definitions |
 | POST | `/api/regression/run` | Run regressions against baseline and hardened targets; pass `target_id` to execute one target |
@@ -72,6 +74,7 @@ The editable built-in targets show the schema in the UI. A sample is at `backend
 | GET | `/api/findings`, `/api/findings/{id}` | Search findings and linked evidence |
 | GET | `/api/traces/{id}` | Ordered trace events |
 | GET | `/api/validations/latest` | Most recent validation |
+| GET | `/api/validations/{id}/export` | Download complete paired validation evidence |
 | GET | `/api/campaigns/{id}/export` | Download campaign evidence JSON |
 
 API docs: <http://127.0.0.1:8000/docs>.
@@ -84,8 +87,8 @@ cd frontend
 npm run build
 ```
 
-The tests cover target seeding and audits, policy enforcement, scope-aware regressions, optional model candidate wiring, behavioral assertions across 25 regression tasks, persisted history and trace links, adaptive tree persistence, untrusted memory versioning and restore, recorded replay, and baseline/hardened corpus comparability.
+The tests cover target seeding and audits, policy enforcement, scope-aware regressions, optional model candidate wiring, behavioral assertions across 25 regression tasks, persisted history and trace links, adaptive tree persistence, untrusted memory versioning and restore, recorded replay, complete evidence exports, secret redaction, backend restart persistence, and baseline/hardened corpus comparability. The OpenAI-compatible adapter is tested against a local mocked endpoint, including bounded tool proposals and timeouts; no paid provider is needed for the test suite.
 
 ## Limits
 
-AgentBreak tests an intentionally simplified support-agent simulator. It does not run arbitrary target tools, test production agent frameworks, provide OS/container isolation, certify a real system, or send actions to third-party services. Live model/harness execution, model-turn capture, and live nondeterministic reproduction remain follow-up work.
+AgentBreak tests an intentionally simplified support-agent simulator. It does not connect to arbitrary deployed agents, run arbitrary target tools, provide OS/container isolation, certify a real system, or send actions to third-party services. The optional OpenAI-compatible model harness is implemented, but external provider operation has only been verified against a local mock endpoint in automated tests; using a real provider requires server-side environment configuration and was not part of this acceptance run.

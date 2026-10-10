@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -155,6 +156,65 @@ def test_live_replay_reports_model_errors_as_errored_not_blocked(setup_db, monke
     assert result["summary"]["blocked"] == 0
     trace = api_module.get_trace(result["cases"][0]["trace_id"])
     assert any(item["action_type"] == "model_error" for item in trace["events"])
+
+
+def test_live_harness_caps_tool_proposals_at_four_per_turn_and_keeps_full_response(setup_db, monkeypatch, mock_chat_endpoint):
+    api_module = setup_db
+    source = _source_campaign(api_module)
+    calls = [_tool_call("search_documents", {"query": f"public guide {index}"}, f"search-{index}") for index in range(5)]
+    url, state = mock_chat_endpoint([_message("Search these synthetic documents.", calls), _message("Search complete.")])
+    _configure_model(monkeypatch, url)
+
+    replay = api_module.run_replay({"source_campaign_id": source["id"], "target_id": "builtin-hardened", "mode": "live"})
+    events = api_module.get_trace(replay["cases"][0]["trace_id"])["events"]
+    first_response = next(item for item in events if item["action_type"] == "model_response")
+    limit = next(item for item in events if item["action_type"] == "model_tool_call_limit")
+    proposals = [item for item in events if item["action_type"] == "tool_proposal" and item.get("source") == "connected_model"]
+    assert len(state["requests"][0]["tools"]) > 0
+    assert len(first_response["response"]["tool_calls"]) == 5
+    assert limit["proposed_count"] == 5 and limit["accepted_count"] == 4
+    assert len(proposals) == 4
+    assert replay["cases"][0]["status"] == "not_reproduced"
+
+
+def test_model_request_timeout_is_errored_and_never_classified_as_defense_success(setup_db, monkeypatch):
+    api_module = setup_db
+    source = _source_campaign(api_module)
+
+    class SlowHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            time.sleep(0.15)
+            payload = json.dumps(_message("late answer")).encode()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except OSError:
+                pass
+
+        def log_message(self, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        _configure_model(monkeypatch, f"http://127.0.0.1:{server.server_port}/v1/chat/completions")
+        monkeypatch.setattr(agent_adapter, "REQUEST_TIMEOUT_SECONDS", 0.025)
+        replay = api_module.run_replay({"source_campaign_id": source["id"], "target_id": "builtin-hardened", "mode": "live"})
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert replay["summary"]["errored"] == 1
+    assert replay["summary"]["blocked"] == 0
+    assert replay["cases"][0]["status"] == "errored"
+    attack_metrics = api_module.calculate_attack_success([{"status": replay["cases"][0]["status"]}])
+    assert attack_metrics["eligible_cases"] == 0
+    assert attack_metrics["success_rate"] is None
 
 
 def test_live_replay_without_configuration_is_explicitly_unavailable(setup_db, monkeypatch):

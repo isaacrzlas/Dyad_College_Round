@@ -1405,7 +1405,7 @@ def run_regressions(target: str = "builtin-hardened", *, validation_id: str | No
         with db() as con:
             con.execute("INSERT INTO traces VALUES(?,?,?,?)", (trace_id, run_id, test_id, json.dumps(safe_events)))
         expected = {"outcome": spec.get("expected_outcome"), "side_effects_permitted": spec.get("permitted_side_effects", []), "side_effects_prohibited": spec.get("prohibited_side_effects", []), "assertion": spec.get("assertion")}
-        outcomes.append({"id": test_id, "name": test["name"], "prompt": test["prompt"], "purpose": spec.get("purpose"), "category": spec.get("category"), "initial_state": spec.get("initial_state", {}), "expected": expected, "actual": actual, "permitted_side_effects": expected["side_effects_permitted"], "prohibited_side_effects": expected["side_effects_prohibited"], "assertion": expected["assertion"], "status": status, "evidence": explanation, "explanation": explanation, "trace_ids": [trace_id], "trace_id": trace_id})
+        outcomes.append({"id": test_id, "name": test["name"], "kind": test.get("kind"), "prompt": test["prompt"], "purpose": spec.get("purpose"), "category": spec.get("category"), "initial_state": spec.get("initial_state", {}), "expected": expected, "actual": actual, "permitted_side_effects": expected["side_effects_permitted"], "prohibited_side_effects": expected["side_effects_prohibited"], "assertion": expected["assertion"], "status": status, "evidence": explanation, "explanation": explanation, "trace_ids": [trace_id], "trace_id": trace_id})
     outcomes = [redact_payload(outcome, target_id, manifest) for outcome in outcomes]
     passed = sum(t["status"] == "passed" for t in outcomes)
     failed = sum(t["status"] == "failed" for t in outcomes)
@@ -1850,6 +1850,18 @@ def replay_detail(replay_id: str) -> dict[str, Any]:
     if not row:
         raise HTTPException(404, "Replay not found")
     return {**dict(row), "summary": json.loads(row["summary"]), "cases": [{**dict(c), "result": json.loads(c["result"])} for c in cases]}
+
+
+@app.get("/api/replays/{replay_id}/export")
+def export_replay(replay_id: str) -> JSONResponse:
+    replay = replay_detail(replay_id)
+    with db() as con:
+        campaign = con.execute("SELECT summary FROM campaigns WHERE id=?", (replay["source_campaign_id"],)).fetchone()
+    target_id = replay.get("target_id")
+    traces = [get_trace(case["trace_id"]) for case in replay["cases"] if case.get("trace_id")]
+    report = {"schema_version": 1, "report_metadata": {"format": "AgentBreak persisted replay evidence", "replay_id": replay_id, "exported_at": now(), "simulation": True}, "replay": replay, "source_campaign": json.loads(campaign["summary"]) if campaign else None, "traces": traces}
+    report = redact_payload(report, target_id)
+    return JSONResponse(report, headers={"Content-Disposition": f'attachment; filename="agentbreak-replay-{replay_id}.json"'})
 
 
 @app.get("/api/campaigns/{campaign_id}/export")
