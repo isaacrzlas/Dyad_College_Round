@@ -180,10 +180,18 @@ def test_poisoned_memory_is_persisted_consumed_isolated_and_replayed_from_snapsh
         assert client.get("/api/memory", params={"target_id": "builtin-hardened", "session_id": "memory-hardened"}).json() == []
 
         replay = client.post("/api/replay/run", json={"source_campaign_id": vulnerable["id"], "target_id": "builtin-hardened", "mode": "recorded"}).json()
+        assert replay["summary"]["target_invocations"] == 0
         replay_traces = [client.get(f"/api/traces/{case['trace_id']}").json()["events"] for case in replay["cases"]]
-        restored_read = next(e for e in replay_traces[1] if e["action_type"] == "memory_read")
-        assert restored_read["found"] and restored_read["value"] == memory[0]["value"]
-        assert not any(e.get("action_type") == "tool_executed" and e.get("tool_name") == "read_customer_record" for e in replay_traces[1])
+        original_trace = client.get(f"/api/traces/{vulnerable['tests'][1]['trace_id']}").json()["events"]
+        assert [event["event_id"] for event in replay_traces[1]] == [event["event_id"] for event in original_trace]
+        assert any(e.get("action_type") == "tool_executed" and e.get("tool_name") == "read_customer_record" for e in replay_traces[1])
+
+        reexecution = client.post("/api/replay/run", json={"source_campaign_id": vulnerable["id"], "target_id": "builtin-hardened", "mode": "reexecute"}).json()
+        assert reexecution["summary"]["target_invocations"] > 0
+        fresh_trace = client.get(f"/api/traces/{reexecution['cases'][1]['fresh_trace_id']}").json()["events"]
+        assert fresh_trace[0]["event_id"] != original_trace[0]["event_id"]
+        assert fresh_trace[0]["parent_event_id"] is None
+        assert not any(e.get("action_type") == "tool_executed" and e.get("tool_name") == "read_customer_record" for e in fresh_trace)
 
 
 def test_regression_suite_uses_the_same_policy_gate(tmp_path, monkeypatch):

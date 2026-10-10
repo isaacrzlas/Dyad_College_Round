@@ -140,7 +140,9 @@ def test_recorded_replay_never_invokes_connected_model(setup_db, monkeypatch):
     monkeypatch.setattr(api_module, "chat_completion", should_not_call_model)
     result = api_module.run_replay({"source_campaign_id": source["id"], "target_id": "builtin-hardened", "mode": "recorded"})
     assert result["mode"] == "recorded"
-    assert result["summary"]["executed"] == 1
+    assert result["summary"]["executed"] == 0
+    assert result["summary"]["reconstructed"] == 1
+    assert result["summary"]["target_invocations"] == 0
 
 
 def test_live_replay_reports_model_errors_as_errored_not_blocked(setup_db, monkeypatch, mock_chat_endpoint):
@@ -278,4 +280,29 @@ def test_unavailable_model_endpoint_reports_connectivity_error(monkeypatch):
     _configure_model(monkeypatch, f"http://127.0.0.1:{port}/v1/chat/completions")
 
     with pytest.raises(RuntimeError, match="Could not reach the configured agent endpoint"):
+        agent_adapter.chat_completion([{"role": "user", "content": "synthetic"}])
+
+
+def test_malformed_content_length_is_reported_as_model_error(monkeypatch):
+    class MalformedResponse:
+        headers = {"Content-Length": "not-a-number"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size):
+            raise AssertionError("body should not be read when the response header is malformed")
+
+    monkeypatch.setattr(agent_adapter, "_config", {
+        "endpoint": "http://127.0.0.1:9999/v1/chat/completions",
+        "model": "mock",
+        "api_key": "",
+        "baseline_prompt": "baseline",
+        "hardened_prompt": "hardened",
+    })
+    monkeypatch.setattr(agent_adapter.urllib.request, "urlopen", lambda *_args, **_kwargs: MalformedResponse())
+    with pytest.raises(RuntimeError, match="malformed Content-Length"):
         agent_adapter.chat_completion([{"role": "user", "content": "synthetic"}])

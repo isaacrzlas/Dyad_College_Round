@@ -169,8 +169,15 @@ def chat_completion(
     try:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             declared_size = response.headers.get("Content-Length")
-            if declared_size and int(declared_size) > MAX_RESPONSE_BYTES:
-                raise RuntimeError("Model response exceeds the 1MB response limit.")
+            if declared_size:
+                try:
+                    parsed_size = int(declared_size)
+                except (TypeError, ValueError):
+                    raise RuntimeError("The model endpoint returned a malformed Content-Length header.") from None
+                if parsed_size < 0:
+                    raise RuntimeError("The model endpoint returned a malformed Content-Length header.")
+                if parsed_size > MAX_RESPONSE_BYTES:
+                    raise RuntimeError("Model response exceeds the 1MB response limit.")
             response_bytes = response.read(MAX_RESPONSE_BYTES + 1)
             if len(response_bytes) > MAX_RESPONSE_BYTES:
                 raise RuntimeError("Model response exceeds the 1MB response limit.")

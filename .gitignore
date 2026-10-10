@@ -10,4 +10,5 @@ node_modules/
 dist/
 .pytest_cache/
 .pytest-tmp/
+/backend/.pytest-audit/
 .ruff_cache/

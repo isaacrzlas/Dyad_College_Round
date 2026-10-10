@@ -58,8 +58,10 @@ def test_frozen_recorded_replay_preserves_source_cases(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
     baseline = api.campaign_run(api.CampaignRequest(target="vulnerable", max_tests=6, seed=22))
     data = api.run_replay({"source_campaign_id":baseline["id"], "target_id":"builtin-hardened", "mode":"recorded"})
-    assert data["summary"]["source_count"] == data["summary"]["executed"]
-    assert data["summary"]["blocked"] > 0
+    assert data["summary"]["source_count"] == data["summary"]["reconstructed"]
+    assert data["summary"]["executed"] == 0
+    assert data["summary"]["target_invocations"] == 0
+    assert data["summary"]["blocked"] + data["summary"]["exploited"] + data["summary"]["passed"] <= data["summary"]["source_count"]
     assert api.replay_detail(data["id"])["cases"]
 
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from candidate_generator import candidate_key, feedback_candidate
+from candidate_generator import candidate_key, evaluate_held_out_generation, feedback_candidate
 
 
 def test_feedback_candidate_mutates_resource_from_denied_trace_deterministically():
@@ -65,3 +65,31 @@ def test_memory_followup_requires_a_recorded_memory_write():
 
 def test_candidate_generation_requires_a_policy_observation():
     assert feedback_candidate({"id": "direct-injection", "category": "Direct prompt injection"}, "prompt", [], 1) is None
+
+
+def test_held_out_strategy_evaluation_uses_scenario_specific_expected_strategies():
+    result = evaluate_held_out_generation(seed=81)
+    assert result["scenario_count"] == 4
+    assert result["discovered_count"] == 4
+    assert {item["scenario_id"] for item in result["results"]} == {
+        "heldout-resource-scope-transfer",
+        "heldout-untrusted-context-transfer",
+        "heldout-persisted-state-followup",
+        "heldout-partial-chain-continuation",
+    }
+    assert all(item["selected_strategy"] == item["expected_strategy"] for item in result["results"])
+    assert all("execute candidate through an adapter" in item["verification"] for item in result["results"])
+
+
+def test_partial_multistage_evidence_generates_a_bounded_continuation():
+    candidate = feedback_candidate(
+        {"id": "multi-stage", "category": "Multi-stage prompt injection"},
+        "continue synthetic retrieval test",
+        [
+            {"action_type": "state_transition", "from_state": "retrieving_document", "to_state": "evaluating_untrusted_context"},
+            {"action_type": "test_result", "status": "blocked"},
+        ],
+        9,
+    )
+    assert candidate["strategy"] == "partial-stage-continuation"
+    assert "evaluating_untrusted_context" in candidate["feedback_signal"]

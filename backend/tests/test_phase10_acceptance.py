@@ -67,13 +67,15 @@ def test_credential_free_guided_demo_and_complete_validation_replay_exports(tmp_
         })
         assert recorded_response.status_code == 200
         replay = recorded_response.json()
-        assert replay["summary"]["executed"] > 0
+        assert replay["summary"]["reconstructed"] > 0
+        assert replay["summary"]["executed"] == 0
+        assert replay["summary"]["target_invocations"] == 0
         replay_export_response = client.get(f"/api/replays/{replay['id']}/export")
         assert replay_export_response.status_code == 200
         replay_report = replay_export_response.json()
         assert replay_report["report_metadata"]["replay_id"] == replay["id"]
         assert replay_report["replay"]["mode"] == "recorded"
-        assert len(replay_report["traces"]) == replay["summary"]["executed"]
+        assert len(replay_report["traces"]) == replay["summary"]["reconstructed"]
         assert all(trace["events"] for trace in replay_report["traces"])
 
 
