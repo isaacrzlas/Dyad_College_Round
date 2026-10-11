@@ -17,4 +17,5 @@ export async function downloadReport(path:string,fallbackName:string){
   link.href=url;link.download=fileName;document.body.appendChild(link);link.click();link.remove();window.setTimeout(()=>URL.revokeObjectURL(url),1000)
 }
 export const percent=(n:unknown)=>typeof n!=='number'||!Number.isFinite(n)?'N/A':`${Math.round(n*100)}%`
+export const countOrUnavailable=(n:unknown)=>typeof n==='number'&&Number.isFinite(n)?String(n):'Not available'
 export const when=(s:unknown)=>typeof s!=='string'||Number.isNaN(Date.parse(s))?'Time unavailable':new Date(s).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
