@@ -1,4 +1,4 @@
 declare module '*.png' {
-  const source: string
-  export default source
+  const assetUrl: string
+  export default assetUrl
 }

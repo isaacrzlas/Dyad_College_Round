@@ -60,6 +60,16 @@ def test_credential_free_guided_demo_and_complete_validation_replay_exports(tmp_
         assert validation_report["regressions"]["hardened"]["results"]
         assert "attachment" in validation_export_response.headers.get("content-disposition", "")
 
+        # Older user databases persisted campaign references under these names.
+        with api.db() as con:
+            con.execute("ALTER TABLE validations RENAME COLUMN baseline_campaign_id TO baseline_id")
+            con.execute("ALTER TABLE validations RENAME COLUMN hardened_campaign_id TO defended_id")
+        legacy_export_response = client.get(f"/api/validations/{validation['id']}/export")
+        assert legacy_export_response.status_code == 200
+        legacy_report = legacy_export_response.json()
+        assert legacy_report["campaigns"]["baseline"]["id"] == metrics["baseline_campaign_id"]
+        assert legacy_report["campaigns"]["hardened"]["id"] == metrics["hardened_campaign_id"]
+
         recorded_response = client.post("/api/replay/run", json={
             "source_campaign_id": metrics["baseline_campaign_id"],
             "target_id": "builtin-hardened",
