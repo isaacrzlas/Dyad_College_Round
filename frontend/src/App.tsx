@@ -1,17 +1,17 @@
 import {useCallback,useEffect,useState} from 'react'
-import {Activity,AlertTriangle,Bug,ChevronRight,LayoutDashboard,Menu,RotateCw,Settings2,ShieldAlert,ShieldCheck,Target,TerminalSquare,X} from 'lucide-react'
+import {Activity,AlertTriangle,Bug,Database,ChevronRight,LayoutDashboard,Menu,RotateCw,Settings2,ShieldAlert,ShieldCheck,Target,TerminalSquare,X} from 'lucide-react'
 import agentBreakMark from './assets/agentbreak-mark.png'
 import {api,countOrUnavailable,isRecord,isRecordArray,Row} from './api'
 import {Overview,Campaigns,Findings,Traces,Defense,Regression,Settings,FindingDialog} from './views'
-import {Targets,Memory,Discovery,ReplayLab} from './phase2'
+import {Targets,Memory,MemorySnapshots,Discovery,ReplayLab} from './phase2'
 import {ViewErrorBoundary} from './ViewErrorBoundary'
 
-export type View='Overview'|'Campaigns'|'Findings'|'Traces'|'Defense Lab'|'Regression'|'Settings'|'Targets'|'Memory'|'Discovery Tree'|'Replay Lab'
+export type View='Overview'|'Campaigns'|'Findings'|'Traces'|'Defense Lab'|'Regression'|'Settings'|'Targets'|'Memory'|'Discovery Tree'|'Replay Lab'|'Snapshot'
 const nav:{name:View;icon:any;group:string}[]=[
  {name:'Overview',icon:LayoutDashboard,group:'Workspace'},{name:'Campaigns',icon:Target,group:'Workspace'},
  {name:'Findings',icon:Bug,group:'Analysis'},{name:'Traces',icon:TerminalSquare,group:'Analysis'},{name:'Discovery Tree',icon:Activity,group:'Analysis'},
  {name:'Defense Lab',icon:ShieldCheck,group:'Validation'},{name:'Replay Lab',icon:RotateCw,group:'Validation'},{name:'Regression',icon:RotateCw,group:'Validation'},
- {name:'Targets',icon:Target,group:'System'},{name:'Memory',icon:ShieldAlert,group:'System'},{name:'Settings',icon:Settings2,group:'System'}]
+ {name:'Targets',icon:Target,group:'System'},{name:'Memory',icon:ShieldAlert,group:'System'},{name:'Snapshot',icon:Database,group:'System'},{name:'Settings',icon:Settings2,group:'System'}]
 
 export default function App(){
  const [view,setView]=useState<View>('Overview'),[summary,setSummary]=useState<Row|null>(null),[campaigns,setCampaigns]=useState<Row[]>([]),[findings,setFindings]=useState<Row[]>([]),[validation,setValidation]=useState<Row|null>(null),[settings,setSettings]=useState<Row|null>(null),[trace,setTrace]=useState<Row|null>(null),[finding,setFinding]=useState<Row|null>(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(''),[mobile,setMobile]=useState(false)
@@ -28,6 +28,7 @@ export default function App(){
  }catch(e){setError(e instanceof Error?e.message:'Cannot reach AgentBreak API')}},[])
  useEffect(()=>{void refresh()},[refresh])
  const flash=(s:string)=>{setNotice(s);window.setTimeout(()=>setNotice(''),3200)}
+
  const runCampaign=async(target:string,target_id:string,categories:string[],max_tests:number,seed:number)=>{setBusy('campaign');try{const r=await api<Row>('/api/campaigns/run',{method:'POST',body:JSON.stringify({target,target_id,categories,max_tests,seed})});if(!isRecord(r)||!isRecord(r.counts)||typeof r.test_count!=='number')throw new Error('Campaign response was incomplete.');await refresh();flash(`${countOrUnavailable(r.counts.confirmed_vulnerability)} confirmed findings · ${r.test_count} tests executed`);return r}finally{setBusy('')}}
  const validate=async()=>{setBusy('validation');try{const r=await api<Row>('/api/defense/validate',{method:'POST'});if(!isRecord(r)||!isRecord(r.metrics)||!isRecord(r.regressions))throw new Error('Validation response was incomplete.');setValidation(r);await refresh();const passed=countOrUnavailable(r.metrics.regression_passed),eligible=countOrUnavailable(r.metrics.regression_eligible_completed);flash(`Validation evidence saved · ${passed}/${eligible} completed regression tasks passed`);return r}finally{setBusy('')}}
  const liveDemo=async()=>{setBusy('demo');setError('');try{await api('/api/campaigns/run',{method:'POST',body:JSON.stringify({target:'vulnerable',categories:['Indirect prompt injection','Memory poisoning','Unauthorized tool execution'],max_tests:6,seed:1701})});const r=await api<Row>('/api/defense/validate',{method:'POST'});if(!isRecord(r)||!isRecord(r.metrics)||!isRecord(r.regressions))throw new Error('Simulation validation response was incomplete.');setValidation(r);await refresh();setView('Defense Lab');flash('Simulation evidence saved · paired validation recorded')}catch(e){setError(e instanceof Error?e.message:'Simulation failed')}finally{setBusy('')}}
@@ -48,7 +49,7 @@ export default function App(){
      {view==='Traces'&&<Traces trace={trace} campaigns={campaigns} onTrace={openTrace}/>}
      {view==='Defense Lab'&&<Defense data={validation} busy={busy==='validation'} onValidate={validate} onTrace={openTrace}/>}
      {view==='Regression'&&<Regression/>}{view==='Settings'&&<Settings data={settings} onRefresh={refresh}/>}
-     {view==='Targets'&&<Targets/>}{view==='Memory'&&<Memory/>}{view==='Discovery Tree'&&<Discovery campaigns={campaigns} onTrace={openTrace}/>}{view==='Replay Lab'&&<ReplayLab campaigns={campaigns} onTrace={openTrace}/>}
+     {view==='Targets'&&<Targets/>}{view==='Memory'&&<Memory onOpenSnapshots={()=>setView('Snapshot')}/>}{view==='Discovery Tree'&&<Discovery campaigns={campaigns} onTrace={openTrace}/>}{view==='Replay Lab'&&<ReplayLab campaigns={campaigns} onTrace={openTrace}/>}{view==='Snapshot'&&<MemorySnapshots/>}
     </ViewErrorBoundary>
    </div>}
   </main>{finding&&<FindingDialog finding={finding} onClose={()=>setFinding(null)} onTrace={openTrace}/ >}{notice&&<div className="toast"><ShieldCheck size={16}/>{notice}</div>}</div>

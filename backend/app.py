@@ -468,7 +468,7 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS attack_nodes_campaign_idx ON attack_nodes(campaign_id, ordinal);
         CREATE TABLE IF NOT EXISTS memory_records(id TEXT PRIMARY KEY, target_id TEXT NOT NULL, session_id TEXT NOT NULL, memory_key TEXT NOT NULL, value TEXT NOT NULL, trust_label TEXT NOT NULL, provenance TEXT NOT NULL, version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT, deleted INTEGER NOT NULL DEFAULT 0, UNIQUE(target_id, session_id, memory_key));
         CREATE TABLE IF NOT EXISTS memory_versions(id TEXT PRIMARY KEY, record_id TEXT NOT NULL, version INTEGER NOT NULL, value TEXT NOT NULL, trust_label TEXT NOT NULL, provenance TEXT NOT NULL, created_at TEXT NOT NULL, action TEXT NOT NULL, UNIQUE(record_id, version));
-        CREATE TABLE IF NOT EXISTS memory_snapshots(id TEXT PRIMARY KEY, target_id TEXT NOT NULL, session_id TEXT NOT NULL, created_at TEXT NOT NULL, records TEXT NOT NULL, label TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS memory_snapshots(id TEXT PRIMARY KEY, target_id TEXT NOT NULL, session_id TEXT NOT NULL, created_at TEXT NOT NULL, records TEXT NOT NULL, label TEXT NOT NULL, origin TEXT NOT NULL DEFAULT 'internal');
         CREATE TABLE IF NOT EXISTS simulator_documents(document_id TEXT PRIMARY KEY, content TEXT NOT NULL, trust_label TEXT NOT NULL, version INTEGER NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS replay_runs(id TEXT PRIMARY KEY, created_at TEXT NOT NULL, source_campaign_id TEXT NOT NULL, target_id TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS replay_cases(id TEXT PRIMARY KEY, replay_id TEXT NOT NULL, source_node_id TEXT NOT NULL, prompt TEXT NOT NULL, category TEXT NOT NULL, status TEXT NOT NULL, result TEXT NOT NULL, trace_id TEXT);
@@ -483,6 +483,7 @@ def init_db() -> None:
             "regression_runs": {"validation_id": "TEXT", "target_version": "INTEGER NOT NULL DEFAULT 1"},
             "regression_results": {"validation_id": "TEXT", "target_version": "INTEGER NOT NULL DEFAULT 1", "trace_ids": "TEXT NOT NULL DEFAULT '[]'", "explanation": "TEXT NOT NULL DEFAULT ''"},
             "audit_findings": {"affected_tool": "TEXT", "problematic_config": "TEXT NOT NULL DEFAULT '{}'", "recommendation": "TEXT NOT NULL DEFAULT ''", "suggested_manifest_change": "TEXT", "uncertainty": "TEXT NOT NULL DEFAULT ''"},
+            "memory_snapshots": {"origin": "TEXT NOT NULL DEFAULT 'internal'"},
         }.items():
             columns = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
             for column, declaration in additions.items():
@@ -490,6 +491,7 @@ def init_db() -> None:
                     con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
         con.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, ?)", (now(),))
         con.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, ?)", (now(),))
+        con.execute("UPDATE memory_snapshots SET origin='user' WHERE label NOT LIKE 'before:%' AND label NOT LIKE 'after:%' AND origin='internal'")
         seed_platform(con)
         # Add stable identities and an explicit parent chain to legacy JSON traces.
         for trace in con.execute("SELECT id,campaign_id,test_id,events FROM traces").fetchall():
@@ -853,7 +855,7 @@ def run_campaign(req: CampaignRequest, candidate_overrides: list[dict[str, Any]]
             con.execute("UPDATE attack_nodes SET status='running' WHERE id=?", (item["node_id"],))
             snapshot_id = str(uuid.uuid4())
             records = [redact_payload(dict(r), target_id) for r in con.execute("SELECT memory_key,value,trust_label,provenance,version,created_at,updated_at,expires_at FROM memory_records WHERE target_id=? AND session_id=? AND deleted=0", (target_id, session_id))]
-            con.execute("INSERT INTO memory_snapshots VALUES(?,?,?,?,?,?)", (snapshot_id, target_id, session_id, now(), json.dumps(records), f"before:{item['node_id']}"))
+            con.execute("INSERT INTO memory_snapshots(id,target_id,session_id,created_at,records,label,origin) VALUES(?,?,?,?,?,?,'internal')", (snapshot_id, target_id, session_id, now(), json.dumps(records), f"before:{item['node_id']}"))
             existing_memory = con.execute("SELECT 1 FROM memory_records WHERE target_id=? AND session_id=? AND memory_key='session.note' AND deleted=0", (target_id, session_id)).fetchone() if case.get("id") == "memory-poisoning" else None
         memory_followup = case.get("id") == "memory-poisoning" and (memory_poisoning_attempted or bool(existing_memory))
         if target_row and target_row["adapter"] == "instrumented-local":
@@ -871,7 +873,7 @@ def run_campaign(req: CampaignRequest, candidate_overrides: list[dict[str, Any]]
             with db() as con:
                 records = [redact_payload(dict(r), target_id) for r in con.execute("SELECT memory_key,value,trust_label,provenance,version,created_at,updated_at,expires_at FROM memory_records WHERE target_id=? AND session_id=? AND deleted=0", (target_id, session_id))]
                 after_snapshot_id = str(uuid.uuid4())
-                con.execute("INSERT INTO memory_snapshots VALUES(?,?,?,?,?,?)", (after_snapshot_id, target_id, session_id, now(), json.dumps(records), f"after:{item['node_id']}"))
+                con.execute("INSERT INTO memory_snapshots(id,target_id,session_id,created_at,records,label,origin) VALUES(?,?,?,?,?,?,'internal')", (after_snapshot_id, target_id, session_id, now(), json.dumps(records), f"after:{item['node_id']}"))
         result["seed"], result["node_id"], result["session_id"] = req.seed, item["node_id"], session_id
         results.append(result)
         traces.append((result["trace_id"], result["test_id"], events))
@@ -1258,32 +1260,128 @@ def memory_history(target_id: str = "builtin-vulnerable", session_id: str = "def
         return [redact_payload(dict(r), target_id) for r in con.execute(sql, args)]
 
 
+@app.get("/api/memory/sessions")
+def list_memory_sessions(target_id: str = "builtin-vulnerable") -> list[str]:
+    if not isinstance(target_id, str) or not target_id or len(target_id) > 128:
+        raise HTTPException(422, "target_id is invalid")
+    with db() as con:
+        if not con.execute("SELECT 1 FROM targets WHERE id=?", (target_id,)).fetchone():
+            raise HTTPException(404, "Target not found")
+        sessions = {row["session_id"] for row in con.execute("SELECT session_id FROM memory_records WHERE target_id=? UNION SELECT session_id FROM memory_snapshots WHERE target_id=?", (target_id, target_id))}
+        traces = con.execute("SELECT events FROM traces").fetchall()
+    for trace in traces:
+        try:
+            events = json.loads(trace["events"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(events, list):
+            sessions.update(event["session_id"] for event in events if isinstance(event, dict) and event.get("target_id") == target_id and isinstance(event.get("session_id"), str) and event["session_id"])
+    return sorted(session for session in sessions if isinstance(session, str) and session)
+
+
 @app.post("/api/memory/snapshot")
 def create_memory_snapshot(body: dict[str, Any]) -> dict[str, Any]:
     target_id, session_id = body.get("target_id", "builtin-vulnerable"), body.get("session_id", "default")
+    label = body.get("label", "Manual snapshot")
+    if not isinstance(target_id, str) or not target_id or len(target_id) > 128:
+        raise HTTPException(422, "target_id is invalid")
+    if not isinstance(session_id, str) or not session_id or len(session_id) > 128:
+        raise HTTPException(422, "session_id must be non-empty text up to 128 characters")
+    if not isinstance(label, str) or not label.strip() or len(label) > 120:
+        raise HTTPException(422, "Snapshot label must be non-empty text up to 120 characters")
+    snapshot_id, created_at = str(uuid.uuid4()), now()
     with db() as con:
-        records = [redact_payload(dict(r), target_id) for r in con.execute("SELECT memory_key,value,trust_label,provenance,version,created_at,updated_at,expires_at FROM memory_records WHERE target_id=? AND session_id=? AND deleted=0", (target_id, session_id))]
-        snapshot_id = str(uuid.uuid4())
-        con.execute("INSERT INTO memory_snapshots VALUES(?,?,?,?,?,?)", (snapshot_id, target_id, session_id, now(), json.dumps(records), body.get("label", "manual snapshot")))
-    return {"id": snapshot_id, "target_id": target_id, "session_id": session_id, "record_count": len(records), "created_at": now()}
+        if not con.execute("SELECT 1 FROM targets WHERE id=?", (target_id,)).fetchone():
+            raise HTTPException(404, "Target not found")
+        rows = con.execute("SELECT memory_key,value,trust_label,provenance,version,created_at,updated_at,expires_at FROM memory_records WHERE target_id=? AND session_id=? AND deleted=0 ORDER BY memory_key", (target_id, session_id)).fetchall()
+        records = [redact_payload(dict(row), target_id) for row in rows]
+        # Serialize and parse to detach the persisted snapshot from all live memory objects.
+        records_json = json.dumps(records, ensure_ascii=False, separators=(",", ":"))
+        records = json.loads(records_json)
+        con.execute("INSERT INTO memory_snapshots(id,target_id,session_id,created_at,records,label,origin) VALUES(?,?,?,?,?,?,'user')", (snapshot_id, target_id, session_id, created_at, records_json, label.strip()))
+    return {"id": snapshot_id, "target_id": target_id, "session_id": session_id, "label": label.strip(), "record_count": len(records), "memory_keys": [record["memory_key"] for record in records], "created_at": created_at}
 
 
 @app.get("/api/memory/snapshots")
 def list_memory_snapshots(target_id: str = "builtin-vulnerable", session_id: str = "default") -> list[dict[str, Any]]:
+    if not isinstance(target_id, str) or not target_id or len(target_id) > 128 or not isinstance(session_id, str) or len(session_id) > 128:
+        raise HTTPException(422, "Target and session identifiers are invalid")
     with db() as con:
-        return [dict(r) for r in con.execute("SELECT id,target_id,session_id,created_at,label FROM memory_snapshots WHERE target_id=? AND session_id=? ORDER BY created_at DESC", (target_id, session_id))]
+        if not con.execute("SELECT 1 FROM targets WHERE id=?", (target_id,)).fetchone():
+            raise HTTPException(404, "Target not found")
+        rows = con.execute("SELECT id,target_id,session_id,created_at,label,records FROM memory_snapshots WHERE target_id=? AND session_id=? AND origin='user' ORDER BY created_at DESC", (target_id, session_id)).fetchall()
+    snapshots=[]
+    for row in rows:
+        try:
+            records=json.loads(row["records"])
+            if not isinstance(records,list): records=[]
+        except (TypeError,json.JSONDecodeError):
+            records=[]
+        snapshots.append({"id":row["id"],"target_id":row["target_id"],"session_id":row["session_id"],"created_at":row["created_at"],"label":row["label"],"record_count":len(records),"memory_keys":[item.get("memory_key") for item in records if isinstance(item,dict) and isinstance(item.get("memory_key"),str)]})
+    return snapshots
+
+
+def _validated_snapshot_records(raw: str) -> list[dict[str, Any]]:
+    try:
+        records = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        raise HTTPException(409, "Saved memory snapshot data is malformed; current memory was not changed")
+    if not isinstance(records, list):
+        raise HTTPException(409, "Saved memory snapshot data is malformed; current memory was not changed")
+    keys=set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise HTTPException(409, "Saved memory snapshot data is malformed; current memory was not changed")
+        key,value=record.get("memory_key"),record.get("value")
+        trust=record.get("trust_label","untrusted")
+        provenance=record.get("provenance","snapshot-restore")
+        version=record.get("version",1)
+        if not isinstance(key,str) or not key or len(key)>128 or not all(char.isalnum() or char in "._-" for char in key) or key in keys:
+            raise HTTPException(409, "Saved memory snapshot contains an invalid or duplicate key; current memory was not changed")
+        if not isinstance(value,str) or len(value)>16384 or not isinstance(trust,str) or trust not in {"trusted","untrusted","system-managed"} or not isinstance(provenance,str) or len(provenance)>1000 or not isinstance(version,int) or version<1:
+            raise HTTPException(409, "Saved memory snapshot contains an invalid record; current memory was not changed")
+        keys.add(key)
+    return records
 
 
 @app.post("/api/memory/snapshots/{snapshot_id}/restore")
-def restore_memory_snapshot(snapshot_id: str) -> dict[str, Any]:
+def restore_memory_snapshot(snapshot_id: str, target_id: str | None = None, session_id: str | None = None) -> dict[str, Any]:
+    if not isinstance(snapshot_id,str) or not snapshot_id or len(snapshot_id)>64:
+        raise HTTPException(422, "snapshot_id is invalid")
     with db() as con:
-        snap = con.execute("SELECT * FROM memory_snapshots WHERE id=?", (snapshot_id,)).fetchone()
-    if not snap:
-        raise HTTPException(404, "Snapshot not found")
-    records = json.loads(snap["records"])
-    restore_memory_records(snap["target_id"], snap["session_id"], records)
-    restored = len(records)
-    return {"restored": restored, "snapshot_id": snapshot_id}
+        snap = con.execute("SELECT * FROM memory_snapshots WHERE id=? AND origin='user'", (snapshot_id,)).fetchone()
+        if not snap:
+            raise HTTPException(404, "Snapshot not found")
+        if (target_id is not None and target_id != snap["target_id"]) or (session_id is not None and session_id != snap["session_id"]):
+            raise HTTPException(404, "Snapshot not found for the selected target and session")
+        records = _validated_snapshot_records(snap["records"])
+        actual_target, actual_session = snap["target_id"], snap["session_id"]
+        stamp=now()
+        # Replace all live records atomically, using the same memory_records table the simulator reads.
+        con.execute("UPDATE memory_records SET deleted=1,updated_at=? WHERE target_id=? AND session_id=? AND deleted=0", (stamp,actual_target,actual_session))
+        for record in records:
+            current=con.execute("SELECT id FROM memory_records WHERE target_id=? AND session_id=? AND memory_key=?",(actual_target,actual_session,record["memory_key"])).fetchone()
+            record_id=current["id"] if current else str(uuid.uuid4())
+            created=record.get("created_at") or stamp
+            updated=record.get("updated_at") or created
+            version=record.get("version",1)
+            if current:
+                con.execute("UPDATE memory_records SET value=?,trust_label=?,provenance=?,version=?,created_at=?,updated_at=?,expires_at=?,deleted=0 WHERE id=?",(record["value"],record.get("trust_label","untrusted"),record.get("provenance","snapshot-restore"),version,created,updated,record.get("expires_at"),record_id))
+            else:
+                con.execute("INSERT INTO memory_records(id,target_id,session_id,memory_key,value,trust_label,provenance,version,created_at,updated_at,expires_at,deleted) VALUES(?,?,?,?,?,?,?,?,?,?,?,0)",(record_id,actual_target,actual_session,record["memory_key"],record["value"],record.get("trust_label","untrusted"),record.get("provenance","snapshot-restore"),version,created,updated,record.get("expires_at")))
+            con.execute("INSERT OR IGNORE INTO memory_versions(id,record_id,version,value,trust_label,provenance,created_at,action) VALUES(?,?,?,?,?,?,?,?)",(str(uuid.uuid4()),record_id,version,record["value"],record.get("trust_label","untrusted"),record.get("provenance","snapshot-restore"),stamp,"restore"))
+    return {"restored":len(records),"snapshot_id":snapshot_id,"target_id":actual_target,"session_id":actual_session,"record_count":len(records)}
+
+
+@app.delete("/api/memory/snapshots/{snapshot_id}")
+def delete_memory_snapshot(snapshot_id: str, target_id: str, session_id: str) -> dict[str, bool]:
+    if not isinstance(snapshot_id,str) or not snapshot_id or len(snapshot_id)>64 or not target_id or len(target_id)>128 or not session_id or len(session_id)>128:
+        raise HTTPException(422, "Snapshot, target, and session identifiers are required")
+    with db() as con:
+        changed=con.execute("DELETE FROM memory_snapshots WHERE id=? AND target_id=? AND session_id=? AND origin='user'",(snapshot_id,target_id,session_id)).rowcount
+    if not changed:
+        raise HTTPException(404,"Snapshot not found for the selected target and session")
+    return {"deleted":True}
 
 
 @app.delete("/api/memory")
