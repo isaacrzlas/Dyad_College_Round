@@ -1,101 +1,207 @@
-# AgentBreak
+AgentBreak
+Discover. Trace. Defend. Validate.
+A reproducible red-team workbench for testing AI-agent security failures, inspecting attack evidence, and validating defensive policies.
+AgentBreak demonstrates how malicious instructions in user prompts, retrieved documents, or session memory can influence an AI-style support workflow and lead to unauthorized tool actions. It runs controlled adversarial tests against deliberately vulnerable and hardened agent simulators, records the execution evidence, and evaluates whether security improvements preserve legitimate functionality.
+Instead of reporting only that an attack succeeded or failed, AgentBreak exposes the chain of events behind the result: the input, retrieved content, memory state, agent decision, proposed tool call, authorization decision, and resulting action.
+All demonstrations use synthetic data and registered mock tools. AgentBreak is designed to make agent security failures observable, reproducible, and testable.
 
-AgentBreak is a local, synthetic AI-agent red-team workbench. It demonstrates how user prompts and untrusted retrieved content can lead a deliberately vulnerable support agent to perform an unauthorized mock action, records the evidence, reconstructs saved traces, re-executes saved inputs against a selected target, and checks legitimate workflows.
+The Problem
+AI agents do more than generate text. They interpret instructions, retrieve information, maintain memory, and propose actions through tools. This creates security risks that ordinary functional tests may miss.
+An agent can produce a reasonable-looking response while following an instruction embedded in an untrusted document, using information outside its intended scope, or proposing an unauthorized action.
+Testing the final response alone does not explain how that failure happened.
+AgentBreak addresses this by evaluating the behavior between input and outcome, preserving evidence that developers can inspect and replay, and comparing vulnerable behavior with stricter defensive policies.
+How It Works
+AgentBreak follows a four-stage workflow:
+1. Discover → 2. Trace → 3. Defend → 4. Validate
+1.Discover: Generate a bounded, reproducible set of adversarial test candidates using predefined scenarios, deterministic mutations, trace-driven follow-ups, and optional model-assisted candidate generation.
+2.Trace: Record the execution path, including untrusted inputs, retrieval and memory events, decisions, proposed tools, authorization outcomes, and synthetic side effects.
+3.Defend: Evaluate the same eligible attack candidates against a hardened target with stricter trust, permission, scope, and approval policies.
+4.Validate: Compare the two target configurations and run legitimate-workflow regressions to check whether the security controls preserve expected behavior.
+The resulting findings, traces, campaign trees, regression results, and validation evidence are persisted in SQLite and can be inspected or exported.
+Architecture
+flowchart TD
+    A[Adversarial Inputs] --> B[Bounded Candidate Generator]
+    B --> C[Synthetic Agent Simulator]
+    C --> D[Retrieval and Session Memory]
+    D --> E[Agent Decision and Tool Proposal]
+    E --> F[Central Authorization Dispatcher]
+    F --> G{Policy Decision}
+    G -->|Allowed| H[Synthetic Tool Execution]
+    G -->|Denied| I[Blocked Action]
+    H --> J[Trace and Evidence Store]
+    I --> J
+    J --> K[Findings and Discovery Tree]
+    J --> L[Replay and Defense Validation]
+    L --> M[Hardened Target Comparison]
+    L --> N[Legitimate Workflow Regressions]
+    M --> O[Metrics and Evidence Export]
+    N --> O
+Technology stack
+Layer	Technology
+Frontend	React, TypeScript, Vite
+Backend	Python, FastAPI
+Persistence	SQLite
+Testing	pytest, local mocked HTTP endpoints
+Optional model integration	OpenAI-compatible chat-completions API
+The backend owns the simulator state machine, registered synthetic tools, authorization dispatcher, persistence, evidence generation, and evaluation logic. The frontend provides the workbench for configuring targets, launching campaigns, inspecting traces, comparing defenses, and reviewing regression results.
+Key Features
+Adversarial Campaigns
+Run bounded campaigns with reproducible seeds and configurable test budgets.
+Generate candidates from predefined scenarios and deterministic mutations.
+Use observed trace signals to schedule bounded follow-up probes.
+Persist candidate rationale, parent-child relationships, outcomes, and linked traces.
+Distinguish predefined, deterministic, feedback-driven, and model-generated candidates.
+Multi-Stage Attack Traces
+Inspect the sequence behind a simulated security failure:
+Attacker-controlled input.
+Retrieved content and trust labels.
+Target- and session-scoped memory.
+Intermediate decisions and proposed tool calls.
+Authorization decisions and policy outcomes.
+Synthetic side effects and final results.
+This makes it possible to investigate the relationship between an untrusted instruction and a subsequent action instead of relying exclusively on the final response.
+Tool and Permission Auditing
+AgentBreak uses target manifests to describe tool availability, risk, roles, permissions, resource scopes, approval requirements, and policy settings.
+Its central authorization dispatcher checks proposed actions against the applicable controls before allowing synthetic side effects. A separate static manifest audit identifies configuration risks such as unrestricted scopes, missing role boundaries, or high-risk tools without approval requirements.
+Static configuration findings are distinguished from evidence of an action that actually executed.
+Replay and Reproducibility
+AgentBreak supports distinct replay workflows:
+Recorded reconstruction: Reconstructs persisted trace events without invoking the target or repeating side effects.
+Fresh simulator re-execution: Runs saved candidate inputs against a selected simulator target and stores new evidence linked to the source trace.
+Fresh model rerun: Listed as a separate mode, but currently unavailable; the live replay endpoint returns HTTP 501.
+Saved inputs, candidate relationships, traces, and outcomes support repeatable investigations under controlled simulator conditions.
+Defense Validation
+Freeze an eligible baseline candidate corpus.
+Replay equivalent attack inputs against the hardened simulator.
+Preserve target configuration versions and case-level outcomes.
+Compare security results using explicit denominators.
+Run legitimate-task regressions alongside attack-focused tests.
+Export paired validation evidence for independent inspection.
+Errors, skipped cases, and inconclusive outcomes remain distinct from successful defenses.
+Behavioral Regression Testing
+The project includes 25 regression task definitions with explicit initial state, operation, expected outcome, side-effect constraints, and behavioral assertions.
+Results use five statuses:
+passed
+failed
+skipped
+errored
+inconclusive
+This helps distinguish a security control that blocks an unsafe action from a workflow that genuinely completes as expected.
+Memory and Snapshots
+AgentBreak supports target- and session-scoped synthetic memory, including trust labels, provenance, version history, snapshots, restoration, and reset operations.
+A snapshot captures the selected session’s memory state only. It does not snapshot campaigns, target settings, documents, or the entire database. Snapshots are persisted in SQLite so a saved memory state can be restored for reproducible testing.
+Evidence and Exports
+Inspect and export persisted campaign and validation evidence, including candidate data, case outcomes, regression results, and trace events.
+The dashboard provides access to:
+Overview
+Campaigns
+Findings
+Traces
+Discovery Tree
+Defense Lab
+Replay Lab
+Regression
+Targets
+Memory
+Settings
 
-All records, identities, documents, and tools are synthetic. The execution boundary is a controlled application-level simulation; it is not operating-system isolation. No real email, customer record, external target, or shell command is used.
-
-## Start the app
-
-Requirements: Python 3.10+ and Node.js 20+.
-
-```powershell
+Run AgentBreak Locally
+AgentBreak is designed to run locally without paid API credentials. The guided demo uses the built-in synthetic targets.
+Prerequisites
+Python 3.10 or later
+Node.js 20 or later
+npm
+1. Clone the repository
+git clone https://github.com/isaacrzlas/Dyad_College_Round.git
+cd Dyad_College_Round
+2. Install backend dependencies
+From the repository root:
 python -m pip install -r backend/requirements.txt
+3. Start the backend
 python -m uvicorn app:app --app-dir backend --reload --host 127.0.0.1 --port 8000
-```
-
-In a second terminal:
-
-```powershell
+The API will be available at http://127.0.0.1:8000.
+Verify the service at http://127.0.0.1:8000/api/health.
+Interactive API documentation is available at http://127.0.0.1:8000/docs.
+4. Install frontend dependencies
+Open a second terminal:
 cd frontend
 npm install
 npm run dev
-```
+Open http://127.0.0.1:5173 in your browser.
+5. Run the guided demonstration
+Select Run Guided Demo from the dashboard.
+The credential-free workflow demonstrates a synthetic exploit, hardened replay, benign regressions, and a saved comparison. Follow the resulting campaign, findings, and traces to inspect the evidence, then review the defensive validation and regression results.
+Note: The demo executes a fresh local simulator workflow. It does not connect to an external AI agent or a live production system.
 
-Open <http://127.0.0.1:5173>. Select **Run Guided Demo** for the credential-free end-to-end synthetic exploit, hardened replay, benign regressions, and saved comparison. SQLite is created at `backend/agentbreak.sqlite3`; set `AGENTBREAK_DB` to choose another path.
+Optional Model-Assisted Candidate Generation
+AgentBreak can use an OpenAI-compatible chat-completions endpoint to propose additional adversarial candidate text and follow-ups.
+Configure the following environment variables in the backend environment:
+LLM_BASE_URL=<your-compatible-endpoint>
+LLM_MODEL=<your-model-name>
+LLM_API_KEY=<your-api-key>
+LLM_API_KEY is optional for endpoints that do not require authentication. Keep credentials server-side and never commit real secrets to the repository.
+This integration is optional. Without it, the local synthetic workflow and test suite do not require a paid provider.
+Important: Model-assisted candidate generation is not the same as executing an external target agent. Generated candidates remain untrusted inputs and are evaluated through the local simulator and authorization path. Genuine external-provider behavior has not been verified as part of the documented acceptance testing.
 
-## Implemented capabilities
-
-- Seeded vulnerable and hardened simulator targets with explicit tools, role boundaries, permissions, scopes, approval flags, and policy settings.
-- Configurable target manifests with create, edit, duplicate, delete, version history, schema validation, and configuration audit findings.
-- A reference integration for explicitly instrumented targets, with target identification/version, declared tool schemas, session lifecycle, health checks, input delivery, response capture, intermediate decisions, tool proposals/outcomes, and declared/observed/inaccessible state labels. The local reference agent is seeded as `reference-vulnerable` and `reference-hardened`.
-- Bounded campaign generation with reproducible seeds, persisted candidate nodes, parent/depth/rationale, trace-feedback follow-ups, outcomes, and linked evidence traces. Candidate sources are labeled as predefined scenarios, deterministic mutations, feedback-driven discoveries, or model-generated candidates. Deterministic follow-ups are selected from observed policy decisions and tool or memory events, deduplicated by normalized category and prompt, and scheduled by evidence priority within the campaign's bounded adaptive budget.
-- A real simulator policy gate checks whether tools are enabled and validates identity, declared permission, resource scope, and approval before synthetic actions. Regression runs use the same gate; the intentionally vulnerable profile bypasses it to produce controlled findings.
-- Optional OpenAI-compatible model-assisted candidate generation and adaptive follow-ups. Fresh live reproductions run the configured harness against synthetic prompts, documents, and registered simulator tools; every proposed call passes through the local authorization dispatcher and is saved with a security outcome and trace.
-- Multi-stage simulated attack traces with attacker input, retrieval trust labels, agent decisions, proposed tools, policy outcomes, mock tool result, and final evidence.
-- Session- and target-scoped SQLite memory with trust labels, provenance, version history, snapshots, restore, and reset. Memory poisoning is persisted as untrusted state on the vulnerable target and rejected on the hardened target.
-- Recorded event reconstruction returns the exact persisted source trace references and never invokes a target or repeats side effects. Fresh target re-execution runs saved input through the selected simulator or local instrumented reference and stores new event IDs linked to the original source trace. Fresh model reruns are a separate mode.
-- Defense validation that freezes the completed baseline candidate corpus and replays the same prompts against hardened policy. Metrics expose executed and inconclusive counts and their denominators.
-- Twenty-five regression task definitions with explicit initial state, operation, expected outcome, permitted/prohibited side effects, and named behavioral assertions. Each run executes both the vulnerable baseline and hardened target through the same simulator and authorization dispatcher.
-- Regression outcomes use `passed`, `failed`, `skipped`, `errored`, or `inconclusive`; saved results include validation ID, target configuration version, explanation, and trace references. Errors and missing evidence are never counted as successful defenses.
-- Dashboard, finding and trace explorers, adaptive discovery tree, target editor/auditor, memory inspector, replay lab, defense comparison, and regression view.
-- Static permission audit findings include severity, affected tool, problematic configuration, concrete remediation, a suggested manifest change when intended scope is known, and uncertainty notes. Validation exports include both targets' static configuration audit results.
-- A reproducible held-out trace-pattern evaluation reports which feedback strategies were selected. It is a candidate-strategy check, not evidence that a vulnerability was discovered or exploited.
-- JSON campaign export and additive SQLite schema migration marker.
-- Complete persisted JSON exports for paired defense validations and replay runs, including source candidates, case outcomes, regression evidence, and trace events.
-
-## Current adapter boundary
-
-The app executes built-in simulator targets and the explicitly instrumented **local reference agent**. The reference target exposes a small decision flow and only registered synthetic tools; its proposals pass through AgentBreak's shared authorization dispatcher. Its declared tool inventory comes from the adapter contract, while decisions, proposals, and outcomes are observed during a run. Model weights, private runtime state, and undeclared tools remain inaccessible. For a target whose tools execute internally without interception, AgentBreak cannot guarantee enforcement.
-
-Set `LLM_BASE_URL`, `LLM_MODEL`, and optionally `LLM_API_KEY` in the backend environment to enable model-assisted candidate generation and fresh model reruns. A connected generic chat model acts as a simulated target under configured system instructions; it does not connect to or reveal an unrelated deployed agent. It receives synthetic prompts and retrieved documents as untrusted context, can propose only registered simulator tools, and every proposal is dispatched through local authorization. No arbitrary code, real customer access, or external actions are available. Requests have 15-second timeouts, 256KB request and 1MB response limits, a 60-request/minute process limit, 20 live cases per run, at most three model turns per case, and four tool proposals per turn. Model manifests can be stored and audited but are not executed. Settings never returns provider credentials.
-
-## Target manifest
-
-The editable built-in targets show the schema in the UI. A sample is at `backend/examples/hardened-target.json`. Version 1 manifests have a `schema_version`, adapter label, target mode, identity, tool declarations (`name`, `enabled`, `risk`, `roles`, permissions, scope, and optional schema), and policy flags. The audit flags high-risk tools without approval, unrestricted scopes, absent role boundaries, missing allowlist enforcement, and unsafe memory authorization policy.
-
-## API
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/health` | API and simulation status |
-| GET | `/api/dashboard/summary` | Dashboard metrics |
-| GET/POST/PUT/DELETE | `/api/targets` and `/api/targets/{id}` | Target manifest CRUD |
-| POST / GET | `/api/targets/{id}/audit` | Run/read manifest permission audit |
-| GET | `/api/targets/{id}/capabilities` | Inspect declared adapter capabilities and visibility limits |
-| POST | `/api/targets/{id}/duplicate` | Clone a target as an editable version 1 |
-| POST | `/api/campaigns/run` | Run bounded campaign (`target`, `target_id`, `categories`, `max_tests`, `seed`, `session_id`) |
-| GET | `/api/campaigns/{id}/tree` | Persisted candidate tree |
-| GET | `/api/campaigns/{id}` | Campaign, traces, and findings |
-| POST | `/api/replay/run` | `recorded` event reconstruction, `reexecute` fresh target run, or `live` fresh model rerun |
-| POST | `/api/discovery/held-out/evaluate` | Evaluate feedback-strategy selection on four held-out trace patterns |
-| GET | `/api/replays`, `/api/replays/{id}` | Replay run and per-case results |
-| GET | `/api/replays/{id}/export` | Download persisted replay evidence and traces |
-| POST | `/api/defense/validate` | Frozen attack replay plus comparative behavioral regression runs |
-| GET/POST/PATCH/DELETE | `/api/regressions` and `/api/regressions/{id}` | Regression case definitions |
-| POST | `/api/regression/run` | Run regressions against baseline and hardened targets; pass `target_id` to execute one target |
-| GET | `/api/regression/runs/{id}` | Retrieve persisted task results, assertions, outcomes, and trace references |
-| GET/POST/DELETE | `/api/memory` | Read, write untrusted memory, or reset a session |
-| POST / GET | `/api/memory/snapshot`, `/api/memory/snapshots` | Create/list session snapshots |
-| POST | `/api/memory/snapshots/{id}/restore` | Restore a saved snapshot |
-| GET | `/api/memory/history` | Inspect version history |
-| GET | `/api/findings`, `/api/findings/{id}` | Search findings and linked evidence |
-| GET | `/api/traces/{id}` | Ordered trace events |
-| GET | `/api/validations/latest` | Most recent validation |
-| GET | `/api/validations/{id}/export` | Download complete paired validation evidence |
-| GET | `/api/campaigns/{id}/export` | Download campaign evidence JSON |
-
-API docs: <http://127.0.0.1:8000/docs>.
-
-## Tests and build
-
-```powershell
+API Reference
+The FastAPI service exposes endpoints for the primary product workflows.
+Area	Representative endpoints
+Health and dashboard	GET /api/health, GET /api/dashboard/summary
+Target management	/api/targets, /api/targets/{id}
+Target auditing	/api/targets/{id}/audit, /api/targets/{id}/capabilities
+Campaigns	POST /api/campaigns/run, GET /api/campaigns/{id}
+Discovery tree	GET /api/campaigns/{id}/tree
+Findings and traces	/api/findings, /api/traces/{id}
+Replay	POST /api/replay/run, /api/replays/{id}
+Defense validation	POST /api/defense/validate
+Regression testing	POST /api/regression/run, /api/regression/runs/{id}
+Synthetic memory	/api/memory, /api/memory/history
+Memory snapshots	/api/memory/snapshot, /api/memory/snapshots
+Snapshot restoration	POST /api/memory/snapshots/{id}/restore
+Validation exports	/api/validations/{id}/export
+Campaign exports	/api/campaigns/{id}/export
+Replay exports	/api/replays/{id}/export
+The complete, interactive request and response schemas are available through the local Swagger UI at /docs.
+Testing and Build
+Run the backend test suite from the repository root:
 python -m pytest backend/tests -q --basetemp backend/.pytest-tmp
+Build the frontend:
 cd frontend
 npm run build
-```
+The backend tests cover policy enforcement, target manifests and audits, regression assertions, memory versioning and restoration, campaign and replay persistence, trace relationships, evidence exports, secret redaction, restart persistence, and paired baseline/hardened comparisons.
+The optional model adapter is tested using a local mocked endpoint, so the automated test suite does not require paid provider access.
+Run these commands on your current checkout to verify the latest code before presenting the project. Test results can change as the repository evolves.
+Data and Configuration
+By default, AgentBreak stores its SQLite database at:
+backend/agentbreak.sqlite3
+To use a different database path, set AGENTBREAK_DB in the backend environment before starting the service.
+Keep local database files and real credentials out of version control. Use isolated test databases when running tests, and avoid deleting the normal application database to reset test state.
+Security Model and Limitations
+AgentBreak is a controlled, application-level simulation, not a production security sandbox.
+All identities, records, documents, tickets, memory, and email effects are synthetic.
+Only supported simulator targets execute. Other adapter labels can be stored and audited but are not general external-agent integrations.
+The built-in vulnerable target deliberately models weak policy behavior to demonstrate controlled failures.
+The hardened target demonstrates stricter policy behavior under equivalent synthetic test conditions.
+The optional model integration proposes candidate text; it does not expose another agent’s private state or run its tools.
+The application does not provide operating-system or container isolation for arbitrary untrusted workloads.
+The project does not connect to real customer systems, send real email, execute shell commands, or invoke arbitrary external tools.
+External-provider behavior and live target-agent execution have not been verified in the documented acceptance run.
+Adaptive discovery is bounded and simulator-specific; it should not be described as unrestricted autonomous vulnerability discovery.
+Understanding the Evidence
+Evidence type	What it demonstrates
+Simulated execution evidence	An action was allowed or denied in the synthetic execution, with supporting trace events.
+Static manifest audit	A declared configuration has a potential permission or policy weakness.
+Mocked adapter test	Code behaves as expected against a controlled local test endpoint.
+External deployment evidence	Not established by the current implementation.
+AgentBreak’s findings and metrics describe the tested simulator and saved evidence. They are not external benchmarks, proof of a real-world vulnerability, or certification that a deployed AI agent is secure.
 
-The tests cover target seeding and audits, policy enforcement, scope-aware regressions, optional model candidate wiring, behavioral assertions across 25 regression tasks, persisted history and trace links, adaptive tree persistence, untrusted memory versioning and restore, recorded replay, complete evidence exports, secret redaction, backend restart persistence, and baseline/hardened corpus comparability. The OpenAI-compatible adapter is tested against a local mocked endpoint, including bounded tool proposals and timeouts; no paid provider is needed for the test suite.
+Project Status
+AgentBreak currently provides a working local workflow for bounded adversarial testing, trace inspection, synthetic tool authorization, deterministic simulator replay, paired defense validation, behavioral regression testing, and persisted evidence exports.
+The main areas for further development are broader evidence-driven adaptive discovery, stronger automated frontend testing, richer causal trace comparisons, and safely scoped integrations with externally instrumented agents.
+Future integrations should preserve the central authorization boundary, reproducibility, complete trace evidence, and explicit separation between simulated and externally verified results.
+Team and Project
+AgentBreak was developed as a college-round hackathon project for the AI-agent security-testing problem statement.
+Repository: isaacrzlas/Dyad_College_Round
+The project aims to make AI-agent security testing more transparent by showing not only whether a controlled attack succeeds, but what happened, why the policy allowed or denied it, and whether the defensive change preserves legitimate behavior.
 
-## Limits
-
-AgentBreak's local instrumented reference proves the adapter contract but does not connect to arbitrary deployed agents. It does not run arbitrary target tools, provide OS/container isolation, certify a real system, or send actions to third-party services. The optional OpenAI-compatible harness has been tested against a local mock endpoint; a real external provider must be configured server-side and was not tested as part of this acceptance run. The held-out evaluation scores expected strategy selection on four synthetic trace fixtures; it does not establish improved exploit discovery.
+AgentBreak is a research and demonstration workbench. Use it to evaluate controlled synthetic scenarios, not as a substitute for a security assessment of a production system.
